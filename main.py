@@ -9,8 +9,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="당근마켓 AI 캡션 생성 서버",
-    description="Gemini 2.5 Flash를 이용한 상품 제목 & 설명 자동 생성",
+    title="AI 캡션 생성 서버",
+    description="Gemini 2.5 Flash를 활동 제목, 자세한 설명 자동 생성",
     version="2.0.0"
 )
 
@@ -34,6 +34,6 @@ def health_check(request: Request):
     logger.info(f"Health check called from {request.client.host}")
     return {
         "status": "ok",
-        "message": "당근마켓 AI 캡션 생성 서버 정상 작동 중!",
+        "message": "AI 캡션 생성 서버 정상 작동 중!",
         "version": "2.0.0"
     }
