@@ -3,7 +3,7 @@ import json
 from google import genai
 from google.genai import types 
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 from dotenv import load_dotenv
 
 # 1. API 키 셋업
@@ -13,6 +13,7 @@ client = genai.Client(api_key=os.environ.get("API_KEY"))
 # 2. 데이터 규격 정의
 class KeywordResponse(BaseModel):
     keywords: List[str]
+    image_description: str  # 사진 속 상황/분위기를 요약한 텍스트 (2단계에서 사진 재전송 없이 재사용)
 
 class Caption(BaseModel):
     title: str
@@ -22,32 +23,80 @@ class Caption(BaseModel):
 class CaptionResponse(BaseModel):
     captions: List[Caption]
 
-# ========================================================
-#[백엔드 전용] 이미지 바이트 배열을 받아 키워드 리스트 반환
-# ========================================================
-def extract_keywords_from_multiple_images(image_bytes_list: List[bytes]) -> List[str]:
-    contents_list = []
-    
-    for image_bytes in image_bytes_list:
-        contents_list.append(types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"))
 
-    sys_instruct = """
+def _build_image_parts(image_bytes_list: List[bytes], mime_types: Optional[List[str]] = None) -> List[types.Part]:
+    """
+    이미지 바이트 리스트를 Gemini에 넣을 Part 객체로 변환.
+    mime_types가 주어지면 각 이미지의 실제 타입을 사용하고,
+    없으면 안전하게 jpeg로 기본 처리.
+    """
+    parts = []
+    for i, image_bytes in enumerate(image_bytes_list):
+        mime_type = mime_types[i] if mime_types and i < len(mime_types) else "image/jpeg"
+        parts.append(types.Part.from_bytes(data=image_bytes, mime_type=mime_type))
+    return parts
+
+
+def _build_context_string(date: Optional[str] = None, time: Optional[str] = None, place: Optional[str] = None) -> str:
+    """
+    날짜/시간/장소 메타데이터를 프롬프트에 넣을 문자열로 변환.
+    값이 없으면 그냥 빈 문자열을 반환 (기존 이미지 전용 흐름과 동일하게 동작).
+    """
+    lines = []
+    if place:
+        lines.append(f"장소: {place}")
+    if date:
+        lines.append(f"날짜: {date}")
+    if time:
+        lines.append(f"시간: {time}")
+
+    if not lines:
+        return ""
+
+    return "\n[사용자가 입력한 상황 정보]\n" + "\n".join(lines) + "\n위 정보도 참고해서 분위기와 상황을 더 정확하게 파악해줘.\n"
+
+
+# ========================================================
+#[백엔드 전용] 이미지 바이트 배열 (+선택적 메타데이터)를 받아 키워드 리스트 반환
+# ========================================================
+def extract_keywords_from_multiple_images(
+    image_bytes_list: List[bytes],
+    mime_types: Optional[List[str]] = None,
+    date: Optional[str] = None,
+    time: Optional[str] = None,
+    place: Optional[str] = None,
+) -> dict:
+    """
+    반환값: {"keywords": [...], "image_description": "..."}
+    image_description은 2단계(generate_scripts_from_description)에서
+    사진을 다시 보내지 않고도 캡션을 쓸 수 있도록, 사진 속 상황/분위기를 요약한 텍스트입니다.
+    """
+    contents_list = _build_image_parts(image_bytes_list, mime_types)
+
+    context_string = _build_context_string(date, time, place)
+
+    sys_instruct = f"""
 너는 인스타 피드 감각 좋은 25살이야.
 유저가 올린 사진들을 여러 번 훑어보면서 상황이랑 분위기를 파악해줘.
-그 다음, 이 사진들에 딱 맞는 인스타그램 해시태그 6개만 뽑아줘.
+{context_string}
+아래 두 가지를 뽑아줘.
 
+1. keywords: 이 사진들에 딱 맞는 인스타그램 해시태그 6개
 [이런 태그로]
 - 실제로 인스타에서 쓰이는 태그.
 - 사진 속 장소, 상황, 감정을 자연스럽게 담을 것.
 - 예시: #도쿄한달살기 #라멘투어 #여행마지막날 #발아파죽는줄 #또가고싶음 #여행같이가자
 - 예시: #원데이클래스 #취미생활 #또하고싶다 #주말취미 #손으로만드는것들
-
 [절대 쓰지 마]
 - #일상 #소통 #맞팔 같은 범용 태그
 - #빛나는하루 #소중한인연 같은 올드한 표현
 - 광고나 홍보 느낌 나는 태그
+
+2. image_description: 사진 속 상황, 장소, 분위기, 눈에 띄는 디테일(색감, 날씨, 사물, 표정 등)을
+   나중에 다른 사람이 사진을 안 보고도 캡션을 쓸 수 있을 정도로 3~5문장으로 구체적으로 묘사.
+   감성적 미사여구 없이 담백하게, 관찰한 사실 위주로 작성.
 """
-    contents_list.append("제시된 모든 사진들의 분위기에 어울리는 해시태그 6개 추출해줘.")
+    contents_list.append("제시된 모든 사진들을 분석해서 keywords와 image_description을 만들어줘.")
 
     response = client.models.generate_content(
         model="gemini-2.5-flash-lite",
@@ -59,23 +108,32 @@ def extract_keywords_from_multiple_images(image_bytes_list: List[bytes]) -> List
             temperature=1.2
         )
     )
-    return json.loads(response.text)['keywords']
+    return json.loads(response.text)
 
 # ========================================================
-# [백엔드 전용] 이미지 바이트 + 태그를 받아 캡션 리스트 반환
+# [백엔드 전용] 이미지 설명 텍스트 + 태그 (+선택적 메타데이터)를 받아 캡션 리스트 반환
+# 1단계(extract_keywords_from_multiple_images)에서 받은 image_description을 그대로 넘기면 됨.
+# 사진 파일을 다시 첨부할 필요 없음.
 # ========================================================
-def generate_scripts_from_multiple_images(image_bytes_list: List[bytes], selected_tags: List[str]) -> List[Caption]:
-    contents_list = []
-    
-    for image_bytes in image_bytes_list:
-        contents_list.append(types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"))
-    
+def generate_scripts_from_description(
+    image_description: str,
+    selected_tags: List[str],
+    date: Optional[str] = None,
+    time: Optional[str] = None,
+    place: Optional[str] = None,
+) -> List[Caption]:
     tags_string = ", ".join(selected_tags)
+    context_string = _build_context_string(date, time, place)
+
     sys_instruct = f"""
 너는 인스타 캡션 잘 쓰는 25살이야.
 
+[사진 속 상황 묘사]
+{image_description}
+
 유저가 선택한 태그: {tags_string}
-제공된 사진들을 보고 제목 + 캡션 세트를 3개 써줘.
+{context_string}
+위 사진 묘사를 참고해서 제목 + 캡션 세트를 3개 써줘.
 ---
 [이런 말투로 써줘]
 "갔다왔는데 생각보다 별로였음.
@@ -120,33 +178,17 @@ def generate_scripts_from_multiple_images(image_bytes_list: List[bytes], selecte
 - "함께여서 행복해", "오늘도 좋은 하루"
 - 이모지, 이모티콘 (ㅎㅎ, ㅠㅠ 정도는 허용)
 - 3개의 캡션 톤·구조가 서로 비슷하게 반복되는 것
----
-[출력 형식] 아래 형식 그대로만 출력해. 부가 설명 절대 붙이지 마.
-1.
-제목: (10자 내외)
-스크립트: (3~4줄)
-태그: #태그1 #태그2 #태그3
-
-2.
-제목: (10자 내외)
-스크립트: (3~4줄)
-태그: #태그1 #태그2 #태그3
-
-3.
-제목: (10자 내외)
-스크립트: (3~4줄)
-태그: #태그1 #태그2 #태그3
 """
-    contents_list.append("사진과 태그를 조합해서 제목과 캡션 3개 만들어줘.")
+    # ✨ 수정됨: 위 프롬프트 맨 아래에 있던 불필요한 [출력 형식] 텍스트 지시문을 깔끔하게 삭제했습니다.
 
     response = client.models.generate_content(
         model="gemini-2.5-flash-lite",
-        contents=contents_list,
+        contents="위 사진 묘사와 태그를 조합해서 제목과 캡션 3개 만들어줘.",
         config=types.GenerateContentConfig(
             system_instruction=sys_instruct,
             response_mime_type="application/json",
             response_schema=CaptionResponse,
-            temperature=1.2
+            temperature=1.0  # ✨ 보너스 수정: JSON 포맷이 깨지지 않도록 창의성 온도를 1.2에서 1.0으로 살짝 낮춰 안정성을 챙겼습니다.
         )
     )
     return [Caption(**c) for c in json.loads(response.text)['captions']]
@@ -171,7 +213,11 @@ if __name__ == "__main__":
             image_bytes_list.append(f.read())
 
     print("[1/2] 이미지 분석 중...\n")
-    ai_keywords = extract_keywords_from_multiple_images(image_bytes_list)
+    result = extract_keywords_from_multiple_images(image_bytes_list)
+    ai_keywords = result["keywords"]
+    image_description = result["image_description"]
+
+    print(f"[사진 설명]\n{image_description}\n")
 
     if ai_keywords:
         print("원하는 키워드를 선택해주세요")
@@ -205,7 +251,7 @@ if __name__ == "__main__":
         print("-" * 50 + "\n")
 
         print("[2/2] 스크립트 작성 중...\n")
-        final_scripts = generate_scripts_from_multiple_images(image_bytes_list, selected_tags)
+        final_scripts = generate_scripts_from_description(image_description, selected_tags)
 
         print("[최종 결과] 생성된 캡션 3가지")
         print("=" * 50)
