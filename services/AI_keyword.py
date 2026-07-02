@@ -11,17 +11,11 @@ load_dotenv()
 client = genai.Client(api_key=os.environ.get("API_KEY"))
 
 # 2. 데이터 규격 정의
-class KeywordResponse(BaseModel):
-    keywords: List[str]
-    image_description: str  # 사진 속 상황/분위기를 요약한 텍스트 (2단계에서 사진 재전송 없이 재사용)
-
-class Caption(BaseModel):
+class AutoCaption(BaseModel):
+    """자동 생성된 캡션 응답"""
     title: str
     script: str
-    tags: List[str]
-
-class CaptionResponse(BaseModel):
-    captions: List[Caption]
+    success: bool = True
 
 
 def _build_image_parts(image_bytes_list: List[bytes], mime_types: Optional[List[str]] = None) -> List[types.Part]:
@@ -37,171 +31,136 @@ def _build_image_parts(image_bytes_list: List[bytes], mime_types: Optional[List[
     return parts
 
 
-def _build_context_string(date: Optional[str] = None, time: Optional[str] = None, place: Optional[str] = None) -> str:
+def _build_context_string(date: Optional[str] = None) -> str:
     """
-    날짜/시간/장소 메타데이터를 프롬프트에 넣을 문자열로 변환.
-    값이 없으면 그냥 빈 문자열을 반환 (기존 이미지 전용 흐름과 동일하게 동작).
+    날짜 정보를 프롬프트에 넣을 문자열로 변환.
+    날짜는 참고용일 뿐 AI 분석에 크게 영향을 주지는 않음.
     """
-    lines = []
-    if place:
-        lines.append(f"장소: {place}")
     if date:
-        lines.append(f"날짜: {date}")
-    if time:
-        lines.append(f"시간: {time}")
-
-    if not lines:
-        return ""
-
-    return "\n[사용자가 입력한 상황 정보]\n" + "\n".join(lines) + "\n위 정보도 참고해서 분위기와 상황을 더 정확하게 파악해줘.\n"
+        return f"[게시 예정 날짜]\n{date}\n"
+    return ""
 
 
 # ========================================================
-#[백엔드 전용] 이미지 바이트 배열 (+선택적 메타데이터)를 받아 키워드 리스트 반환
+# [메인 함수] 이미지를 받아서 바로 제목 + 캡션 1개 생성
+# AI 방식: 작성자가 사진만 올리면 AI가 바로 제목+설명 작성
 # ========================================================
-def extract_keywords_from_multiple_images(
+def generate_caption_directly(
     image_bytes_list: List[bytes],
     mime_types: Optional[List[str]] = None,
     date: Optional[str] = None,
-    time: Optional[str] = None,
-    place: Optional[str] = None,
-) -> dict:
+) -> AutoCaption:
     """
-    반환값: {"keywords": [...], "image_description": "..."}
-    image_description은 2단계(generate_scripts_from_description)에서
-    사진을 다시 보내지 않고도 캡션을 쓸 수 있도록, 사진 속 상황/분위기를 요약한 텍스트입니다.
+    이미지를 분석해서 제목과 상세 설명을 한 번에 생성합니다.
+    
+    입력: 이미지(들) + 날짜(선택)
+    출력: {"title": "...", "script": "..."}
+    
+    사진을 한 번만 업로드하면 되고, "다시 생성" 버튼으로 다른 스타일을 얻을 수 있습니다.
     """
     contents_list = _build_image_parts(image_bytes_list, mime_types)
-
-    context_string = _build_context_string(date, time, place)
+    context_string = _build_context_string(date)
 
     sys_instruct = f"""
-너는 인스타 피드 감각 좋은 25살이야.
-유저가 올린 사진들을 여러 번 훑어보면서 상황이랑 분위기를 파악해줘.
+너는 동아리 활동 사진을 보고, 그 활동을 기록하는 제목과 설명을 대신 써주는 AI야.
+사진만 보고도 활동이 무엇이었는지 정확히 파악하고, 그 순간의 분위기를 담아 자연스럽게 기록해줘.
+
 {context_string}
-아래 두 가지를 뽑아줘.
 
-1. keywords: 이 사진들에 딱 맞는 인스타그램 해시태그 6개
-[이런 태그로]
-- 실제로 인스타에서 쓰이는 태그.
-- 사진 속 장소, 상황, 감정을 자연스럽게 담을 것.
-- 예시: #도쿄한달살기 #라멘투어 #여행마지막날 #발아파죽는줄 #또가고싶음 #여행같이가자
-- 예시: #원데이클래스 #취미생활 #또하고싶다 #주말취미 #손으로만드는것들
-[절대 쓰지 마]
-- #일상 #소통 #맞팔 같은 범용 태그
-- #빛나는하루 #소중한인연 같은 올드한 표현
-- 광고나 홍보 느낌 나는 태그
+[작성 전, 사진을 먼저 이렇게 관찰해]
+- 무슨 활동인지 (등산, 드라이브, 베이킹, 운동, 사진 촬영, 카페 모임, 봉사, 전시 관람, 캠핑, 낚시, 보드게임·방탈출, 스터디·독서모임, 공연 관람, 영화 감상, 악기 연주, 여행 등)
+- 장소와 환경 (실내/실외, 자연/도심, 산·바다·강 같은 지형, 카페·스튜디오·강의실 같은 실내 공간, 계절감과 색감(단풍·벚꽃·눈), 날씨, 맑음/흐림, 시간대, 밝음/어두움/노을, 조명의 밝기나 분위기)
+- 눈에 띄는 사물이나 디테일 (장비, 배경, 음식이나 음료, 풍경, 인원 수와 구성, 소품(피크닉 매트·텐트·카메라·악기 등), 사람들의 표정이나 손동작)
+- 전체적인 분위기 (활기참, 차분함, 집중, 여유, 왁자지껄함, 고요함, 나른함, 몰입, 설렘 등)
+관찰한 사실을 근거로 제목과 설명을 써야 해. 사진에 없는 건 절대 지어내지 마.
 
-2. image_description: 사진 속 상황, 장소, 분위기, 눈에 띄는 디테일(색감, 날씨, 사물, 표정 등)을
-   나중에 다른 사람이 사진을 안 보고도 캡션을 쓸 수 있을 정도로 3~5문장으로 구체적으로 묘사.
-   감성적 미사여구 없이 담백하게, 관찰한 사실 위주로 작성.
+[제목 작성 규칙]
+- 8~15자, 활동의 핵심이나 그 순간의 분위기를 한 줄로
+- 사진에서 실제로 파악한 활동/장소가 드러나면 좋음
+- 이모지나 특수기호는 쓰지 말 것
+
+[설명 작성 규칙]
+- 4~6문장, 일기를 쓰듯 차분하고 따뜻한 문체
+- 사진에서 관찰한 활동, 장소, 분위기를 구체적으로 담기
+- 활동의 흐름(무엇을 했고, 어땠고, 어떤 기분이었는지)이 자연스럽게 이어지게
+- 담담하게, 그때의 기분이 억지스럽지 않게 묻어나게
+
+[좋은 예시 - 이 패턴과 분량을 참고해]
+(사진: 한강에서 자전거, 맑은 날)
+제목: "한강 자전거 라이딩"
+설명: "맑은 날 한강을 따라 자전거를 탔다. 물 위로 햇빛이 반사되는 걸 보면서 계속 페달을 밟았다. 중간에 잠깐 멈춰서 다리 위에서 강을 내려다봤는데 바람이 시원했다. 생각보다 오래 달려서 다리는 좀 뻐근했지만 기분은 가벼웠다. 다음에는 더 멀리까지 가보고 싶다."
+
+(사진: 실내 스튜디오 조명 세팅)
+제목: "조명 세팅하는 날"
+설명: "스튜디오에서 인물 사진용 조명을 세팅했다. 각도를 바꿔가며 여러 번 테스트했는데 원하는 느낌이 쉽게 안 나왔다. 다 같이 모니터를 보면서 이게 낫다 저게 낫다 의견을 주고받았다. 생각보다 시간이 오래 걸렸지만 하나씩 맞춰가는 과정이 나름 재밌었다. 다음엔 좀 더 빨리 잡을 수 있을 것 같다."
+
+(사진: 밤에 도심에서 러닝, 야경)
+제목: "밤 러닝 한 바퀴"
+설명: "저녁을 먹고 다 같이 러닝을 나갔다. 낮보다 선선해서 뛰기에 딱 좋은 날씨였다. 불 켜진 건물들을 지나면서 한 바퀴 도는데 생각보다 페이스가 잘 붙었다. 중간부터 숨이 차서 말수가 줄었지만 끝까지 다 같이 완주했다. 땀 흘리고 나니 머리가 개운해진 느낌이었다."
+
+(사진: 차 안에서 노을 보이는 드라이브)
+제목: "노을 보러 드라이브"
+설명: "특별한 목적지 없이 그냥 차를 타고 나왔다. 창밖으로 노을이 지기 시작하는 걸 보면서 음악을 틀어놨다. 신호에 걸릴 때마다 하늘 색이 조금씩 바뀌는 게 보였다. 딱히 대단한 걸 한 건 아닌데 이런 시간이 오히려 오래 기억에 남을 것 같다."
+
+(사진: 실내에서 보드게임 하는 모습, 밤)
+제목: "밤새 보드게임"
+설명: "다 같이 모여서 보드게임을 했다. 규칙을 설명하는 데만 한참 걸렸는데 막상 시작하니 다들 승부욕이 올라왔다. 이기려고 머리 굴리다가 어이없는 판단으로 지는 사람이 나올 때마다 웃음이 터졌다. 시간 가는 줄 모르고 몇 판을 연달아 했다. 별거 아닌데 이런 날이 제일 재밌는 것 같다."
+
+(사진: 베이킹, 반죽과 오븐)
+제목: "같이 만든 쿠키"
+설명: "다 같이 쿠키를 만들어봤다. 반죽을 나눠서 모양을 내는데 각자 손재주가 티가 났다. 오븐에서 익는 냄새가 퍼지기 시작하니까 다들 앞에 모여서 구경했다. 몇 개는 좀 타긴 했지만 그것도 나름 맛있었다. 만드는 내내 손은 엉망이 됐어도 계속 웃으면서 했다."
+
+[절대 금지]
+- "최고예요", "정말 멋져요!", "이렇게 예쁜 곳은 처음" 같은 과장·감탄
+- "빛나는", "소중한", "몽글몽글" 같은 뻔한 감성 단어
+- 사진에 보이지 않는 정보를 추측해서 추가하는 것
+- 광고나 홍보처럼 들리는 톤
 """
-    contents_list.append("제시된 모든 사진들을 분석해서 keywords와 image_description을 만들어줘.")
+
+    contents_list.append("이 사진을 보고 제목과 상세 설명을 작성해줘. 자연스럽고 사실적으로.")
 
     response = client.models.generate_content(
-        model="gemini-2.5-flash-lite",
+        model="gemini-2.5-flash",
         contents=contents_list,
         config=types.GenerateContentConfig(
             system_instruction=sys_instruct,
             response_mime_type="application/json",
-            response_schema=KeywordResponse,
-            temperature=1.2
+            response_schema={
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "8~15자 내외의 활동 제목"
+                    },
+                    "script": {
+                        "type": "string",
+                        "description": "4~6문장의 활동 기록 설명"
+                    }
+                },
+                "required": ["title", "script"]
+            },
+            temperature=1.1  # 매번 다른 스타일로 생성하기 위해 약간의 창의성 확보
         )
     )
-    return json.loads(response.text)
-
-# ========================================================
-# [백엔드 전용] 이미지 설명 텍스트 + 태그 (+선택적 메타데이터)를 받아 캡션 리스트 반환
-# 1단계(extract_keywords_from_multiple_images)에서 받은 image_description을 그대로 넘기면 됨.
-# 사진 파일을 다시 첨부할 필요 없음.
-# ========================================================
-def generate_scripts_from_description(
-    image_description: str,
-    selected_tags: List[str],
-    date: Optional[str] = None,
-    time: Optional[str] = None,
-    place: Optional[str] = None,
-) -> List[Caption]:
-    tags_string = ", ".join(selected_tags)
-    context_string = _build_context_string(date, time, place)
-
-    sys_instruct = f"""
-너는 인스타 캡션 잘 쓰는 25살이야.
-
-[사진 속 상황 묘사]
-{image_description}
-
-유저가 선택한 태그: {tags_string}
-{context_string}
-위 사진 묘사를 참고해서 제목 + 캡션 세트를 3개 써줘.
----
-[이런 말투로 써줘]
-"갔다왔는데 생각보다 별로였음.
-근데 이상하게 기억은 남아.
-사진도 많이 찍었고 ㅋㅋ 왜 찍었는지 모르겠지만."
-
-"딱히 기대한 건 없었는데
-막상 가니까 나쁘지 않았어.
-다음에 또 올지는 모르겠고."
-
-"되게 오래 걸어서 다리 좀 아팠음.
-근데 그것도 나름 재밌었던 것 같기도 하고.
-배고파서 중간에 뭔가 먹었는데 그게 더 맛있었음."
-
-"사진은 열심히 찍었는데 정작 올릴 건 별로 없네.
-뭔가 그냥 그랬달까.
-또 가자고는 했는데 진짜 갈지는 모름."
-
-이런 사용자들의 말투를 참고하여 스크립트를 작성해줘. 이 문구 그대로 작성해달라는 것 아님.
----
-[제목 쓰는 법]
-- 10자 내외, 사진 분위기랑 딱 맞는 한 줄로
-- 아래 3가지 스타일 중 사진에 맞는 걸로 써줘
-
-  (감정 툭 던지기) "그냥 좋았어", "생각보다였음", "이상하게 기억에 남음"
-  (상황 단편적으로) "비 오기 직전", "마지막 날 아침", "밥 먹으러 갔다가"
-  (혼잣말) "또 가야 하나", "다음엔 더 오래", "근데 또 가고 싶음"
-- 나쁜 예시: "빛나는 서울의 하루", "소중한 우리들의 이야기", "롯데타워 너무 높음"
----
-[스크립트 분량]
-- 3~4줄, 한 줄당 20~35자 내외
-- 너무 짧으면 안 됨. 생각이 자연스럽게 이어지는 느낌으로
----
-[문장 끝내는 법]
-- 깔끔하게 마무리 짓거나 결론 내리지 마.
-- 잘된 예시: "근데 다리는 좀 아팠음", "뭔가 또 오고 싶긴 한데 귀찮아질 것 같고", "같이 간 친구가 더 신나했음 ㅋㅋ"
-- 나쁜 예시: "기분 전환 제대로 한 듯", "다음에 또 와도 괜찮을 것 같아", "좋은 하루였어"
----
-[절대 쓰지 마]
-- "황홀하다", "예술이다", "압도된다", "제대로 난다"
-- "빛나는", "소중한", "따뜻한", "몽글몽글"
-- "함께여서 행복해", "오늘도 좋은 하루"
-- 이모지, 이모티콘 (ㅎㅎ, ㅠㅠ 정도는 허용)
-- 3개의 캡션 톤·구조가 서로 비슷하게 반복되는 것
-"""
-    # ✨ 수정됨: 위 프롬프트 맨 아래에 있던 불필요한 [출력 형식] 텍스트 지시문을 깔끔하게 삭제했습니다.
-
-    response = client.models.generate_content(
-        model="gemini-2.5-flash-lite",
-        contents="위 사진 묘사와 태그를 조합해서 제목과 캡션 3개 만들어줘.",
-        config=types.GenerateContentConfig(
-            system_instruction=sys_instruct,
-            response_mime_type="application/json",
-            response_schema=CaptionResponse,
-            temperature=1.0  # ✨ 보너스 수정: JSON 포맷이 깨지지 않도록 창의성 온도를 1.2에서 1.0으로 살짝 낮춰 안정성을 챙겼습니다.
-        )
+    
+    result = json.loads(response.text)
+    return AutoCaption(
+        title=result.get("title", ""),
+        script=result.get("script", ""),
+        success=True
     )
-    return [Caption(**c) for c in json.loads(response.text)['captions']]
 
 
 # ========================================================
 # [로컬 테스트]
 # ========================================================
 if __name__ == "__main__":
-    target_images = ["lt1.jpg", "lt2.jpg"]
+    # 테스트할 이미지 파일명을 여기에 나열 (1장이든 여러 장이든 자유롭게)
+    # 예) 단일: ["cat1.jpg"]   /   다중: ["cat1.jpg", "cat2.jpg", "cat3.jpg", "cat4.jpg"]
+    target_images = ["cat1.jpg", "cat2.jpg", "cat3.jpg", "cat4.jpg"]
 
     print("\n" + "="*50)
-    print("AI 초안 로컬 테스트")
+    print(f"AI 캡션 생성 테스트 (이미지 {len(target_images)}장)")
     print("="*50 + "\n")
 
     image_bytes_list = []
@@ -212,53 +171,19 @@ if __name__ == "__main__":
         with open(path, "rb") as f:
             image_bytes_list.append(f.read())
 
-    print("[1/2] 이미지 분석 중...\n")
-    result = extract_keywords_from_multiple_images(image_bytes_list)
-    ai_keywords = result["keywords"]
-    image_description = result["image_description"]
+    print("AI가 제목과 설명을 작성 중입니다...\n")
+    caption = generate_caption_directly(image_bytes_list, date="2026-07-01")
 
-    print(f"[사진 설명]\n{image_description}\n")
+    print("[생성된 캡션]")
+    print("=" * 50)
+    print(f"제목: {caption.title}")
+    print(f"\n상세 설명:\n{caption.script}")
+    print("=" * 50)
 
-    if ai_keywords:
-        print("원하는 키워드를 선택해주세요")
-        for i, kw in enumerate(ai_keywords, 1):
-            print(f"  [{i}] {kw}")
-
-        custom_btn_num = len(ai_keywords) + 1
-        print(f"  [{custom_btn_num}] + 직접 입력할래요")
-        print("\n" + "-"*50)
-
-        user_choices = input(f"번호를 띄어쓰기로 입력 (예: 1 3 {custom_btn_num}) : ")
-        choice_numbers = user_choices.split()
-
-        selected_tags = []
-        for num in choice_numbers:
-            if num.isdigit() and 1 <= int(num) <= len(ai_keywords):
-                selected_tags.append(ai_keywords[int(num)-1])
-
-        if str(custom_btn_num) in choice_numbers:
-            print("\n나만의 키워드를 입력하세요.")
-            custom_tag = input("키워드 입력 : ")
-            if custom_tag.strip():
-                if not custom_tag.startswith("#"):
-                    custom_tag = "#" + custom_tag
-                selected_tags.append(custom_tag)
-
-        if not selected_tags:
-            selected_tags = [ai_keywords[0]]
-
-        print(f"\n선택된 키워드: {selected_tags}")
-        print("-" * 50 + "\n")
-
-        print("[2/2] 스크립트 작성 중...\n")
-        final_scripts = generate_scripts_from_description(image_description, selected_tags)
-
-        print("[최종 결과] 생성된 캡션 3가지")
-        print("=" * 50)
-        for i, caption in enumerate(final_scripts, 1):
-            tags_str = " ".join(caption.tags) if caption.tags else ""
-            print(f"{i}번 캡션")
-            print(f"제목: {caption.title}")
-            print(f"스크립트:\n{caption.script}")
-            print(f"태그: {tags_str}\n")
-        print("=" * 50)
+    # 다시 생성 테스트
+    print("\n\n[다시 생성 - 다른 스타일]")
+    caption2 = generate_caption_directly(image_bytes_list, date="2026-07-01")
+    print("=" * 50)
+    print(f"제목: {caption2.title}")
+    print(f"\n상세 설명:\n{caption2.script}")
+    print("=" * 50)
