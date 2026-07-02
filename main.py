@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # 새로 만든 ai_router를 불러옵니다
 from routers import ai_router
+# from routers import recommend_router  # (2차 AI - 활동 추천 라우터 완성되면 주석 해제)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ app.add_middleware(
 
 # 라우터 등록: 외부에서 /api/v1/auto-caption 주소로 접속할 수 있게 연결합니다.
 app.include_router(ai_router.router, prefix="/api/v1", tags=["AI_Caption"])
+# app.include_router(recommend_router.router, prefix="/api/v1", tags=["AI_Recommendation"])  # (2차 AI 완성되면 주석 해제)
 
 @app.get("/")
 def health_check(request: Request):
