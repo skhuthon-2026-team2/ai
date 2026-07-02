@@ -24,16 +24,16 @@ async def auto_caption(
 ):
     """
     이미지 업로드하면 AI가 바로 제목과 상세 설명을 작성합니다.
-    
+
     입력:
     - files (필수): 사진 파일 (1장 이상)
     - date (선택): 게시 예정 날짜 (예: "2026-07-01")
-    
+
     출력:
     {
       "success": true,
-      "title": "고급스러운 백화점 가방",
-      "script": "거의 안 써서 상태 좋습니다. 색상도 예쁘고...",
+      "title": "노을 보러 드라이브",
+      "script": "특별한 목적지 없이 그냥 차를 타고 나왔다. 창밖으로 노을이 지기 시작하는 걸 보면서 음악을 틀어놨다. 신호에 걸릴 때마다 하늘 색이 조금씩 바뀌는 게 보였다. 딱히 대단한 걸 한 건 아닌데 이런 시간이 오히려 오래 기억에 남을 것 같다.",
       "message": "제목과 설명이 작성되었습니다. 다시 작성하고 싶다면 [다시 생성] 버튼을 눌러주세요."
     }
     """
@@ -49,7 +49,7 @@ async def auto_caption(
             mime_types.append(file.content_type)
 
         logger.info(f"{len(files)}장의 이미지로 캡션을 생성합니다... (date={date})")
-        
+
         # AI 호출을 백그라운드 스레드로 넘겨서 서버 멈춤 방지
         caption = await run_in_threadpool(
             generate_caption_directly,
@@ -71,6 +71,6 @@ async def auto_caption(
     except Exception as e:
         logger.error(f"AI 처리 중 오류가 발생했습니다: {str(e)}")
         raise HTTPException(
-            status_code=500, 
+            status_code=500,
             detail=f"AI가 현재 너무 바쁩니다! 잠시 후 다시 시도해주세요. (사유: {str(e)})"
         )
