@@ -9,11 +9,8 @@ from services.recommendation_memory import (
     allow_duplicate
 )
 
-from services.feedback_service import (
-    get_best_activities
-)
-
 from prompts.recommend_prompt import RECOMMEND_PROMPT
+
 from utils.parser import parse_json
 
 
@@ -23,6 +20,13 @@ def recommend(activity_data):
     print("사용자 활동 분석 시작")
     print("=" * 50)
 
+    # 활동이 하나도 없는 경우
+    if not activity_data.get("activities"):
+        return {
+            "message": "분석할 활동 데이터가 없습니다.",
+            "recommendations": []
+        }
+
     history = ""
 
     print("\n이미지 분석 중...\n")
@@ -30,7 +34,6 @@ def recommend(activity_data):
     # -------------------------
     # 활동 + 이미지 분석
     # -------------------------
-
     for activity in activity_data["activities"]:
 
         image_result = analyze_image(activity["image"])
@@ -53,31 +56,12 @@ def recommend(activity_data):
     # -------------------------
     # 최근 추천 기록
     # -------------------------
-
     recent = get_recent_recommendations()
     recent_text = "\n".join(recent)
 
     # -------------------------
-    # 사용자 평가
-    # -------------------------
-
-    favorite = get_best_activities()
-
-    favorite_text = ""
-
-    for item in favorite:
-
-        favorite_text += f"""
-활동 : {item["activity"]}
-
-평점 : {item["score"]}
-
-"""
-
-    # -------------------------
     # Gemini Prompt 생성
     # -------------------------
-
     prompt = f"""
 {RECOMMEND_PROMPT}
 
@@ -94,16 +78,11 @@ def recommend(activity_data):
 {recent_text}
 
 =========================
-사용자가 좋아했던 활동
-=========================
-
-{favorite_text}
-
-=========================
 
 최근 추천과 최대한 겹치지 않도록 추천하세요.
 
 단,
+
 약 20% 정도는 기존 추천을 다시 추천할 수 있습니다.
 
 반드시 JSON만 출력하세요.
@@ -121,7 +100,6 @@ def recommend(activity_data):
     # -------------------------
     # Python 중복 검사
     # -------------------------
-
     if "recommendations" in result:
 
         recent = get_recent_recommendations()
@@ -134,8 +112,10 @@ def recommend(activity_data):
 
             title = rec["title"]
 
+            # 최근 추천과 중복인 경우
             if title in recent:
 
+                # 20% 확률만 허용
                 if duplicate_allowed:
                     filtered.append(rec)
 
@@ -144,6 +124,7 @@ def recommend(activity_data):
 
         result["recommendations"] = filtered
 
+        # 추천 기록 저장
         save_recommendations(filtered)
 
     return result
