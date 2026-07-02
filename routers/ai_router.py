@@ -1,7 +1,7 @@
 import logging
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.concurrency import run_in_threadpool
-from typing import List, Optional
+from typing import Annotated, List, Optional
 
 # 옆 폴더(services)에 있는 AI 함수를 불러옵니다.
 from services.AI_keyword import generate_caption_directly
@@ -19,7 +19,7 @@ def _validate_and_extract(files: List[UploadFile]):
 
 @router.post("/auto-caption")
 async def auto_caption(
-    files: List[UploadFile] = File(...),
+    files: Annotated[list[UploadFile], File(...)],
     date: Optional[str] = Form(None),
 ):
     """
