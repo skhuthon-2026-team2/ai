@@ -2,9 +2,10 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-# 새로 만든 ai_router를 불러옵니다
+# 캡션 생성 라우터
 from routers import ai_router
-# from routers import recommend_router  # (2차 AI - 활동 추천 라우터 완성되면 주석 해제)
+# 활동 추천 라우터
+from api.router import router as recommend_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -15,9 +16,6 @@ app = FastAPI(
     version="2.0.0"
 )
 
-# CORS 설정: 프론트엔드(다른 도메인)에서 이 서버 API를 호출할 수 있도록 허용합니다.
-# 해커톤 개발 단계라 우선 전체 허용("*")으로 두고,
-# 프론트 배포 주소가 확정되면 allow_origins를 그 주소로 좁히는 걸 권장합니다.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -26,9 +24,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 라우터 등록: 외부에서 /api/v1/auto-caption 주소로 접속할 수 있게 연결합니다.
 app.include_router(ai_router.router, prefix="/api/v1", tags=["AI_Caption"])
-# app.include_router(recommend_router.router, prefix="/api/v1", tags=["AI_Recommendation"])  # (2차 AI 완성되면 주석 해제)
+app.include_router(recommend_router, prefix="/api/v1", tags=["AI_Recommendation"])
 
 @app.get("/")
 def health_check(request: Request):
