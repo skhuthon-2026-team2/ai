@@ -42,7 +42,6 @@ def recommend(activity_data):
         history += f"""
 제목 : {activity["title"]}
 
-장소 : {activity["location"]}
 
 설명 : {activity["description"]}
 
