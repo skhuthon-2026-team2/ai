@@ -42,7 +42,6 @@ def recommend(activity_data):
         history += f"""
 제목 : {activity["title"]}
 
-
 설명 : {activity["description"]}
 
 날짜 : {activity["date"]}
@@ -124,7 +123,6 @@ def recommend(activity_data):
 
         # -------------------------
         # 추천 활동별 이미지 검색
-        # image_keyword -> location -> title 순으로 시도
         # -------------------------
         print("\n추천 활동 이미지 검색 중...\n")
 
