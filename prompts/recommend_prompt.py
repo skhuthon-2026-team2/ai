@@ -12,7 +12,6 @@ RECOMMEND_PROMPT = """
 
 먼저 아래 내용을 분석하세요.
 
-- 자주 방문하는 장소
 - 자주 하는 활동
 - 실내/실외 활동 비율
 - 계절별 활동 패턴
@@ -41,15 +40,12 @@ RECOMMEND_PROMPT = """
 추천 이유를 반드시 작성하세요.
 
 6.
-장소도 함께 추천하세요.
-
-7.
 추천 활동은 3개 생성하세요.
 
-8.
+7.
 추천은 늘 추천하는 당일의 날짜 기준으로 추천해줘.
 
-9.
+8.
 각 추천마다 image_keyword를 함께 작성하세요.
 image_keyword는 이 활동을 대표하는 장면을 담은 이미지를 검색하기 위한 것으로,
 다음 조건을 반드시 지키세요.
@@ -65,7 +61,6 @@ image_keyword는 이 활동을 대표하는 장면을 담은 이미지를 검색
 
 {
     "analysis": {
-        "favorite_place": "",
         "favorite_activity": "",
         "activity_style": "",
         "season": "",
@@ -74,7 +69,6 @@ image_keyword는 이 활동을 대표하는 장면을 담은 이미지를 검색
     "recommendations": [
         {
             "title": "",
-            "location": "",
             "reason": "",
             "description": "",
             "image_keyword": ""

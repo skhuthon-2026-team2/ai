@@ -60,8 +60,7 @@ def search_image_for_recommendation(rec: dict) -> str | None:
 
     시도 순서:
     1. image_keyword — AI가 이미지 검색용으로 만든 영어 키워드 (가장 결과가 풍부함)
-    2. location — 활동 장소명 (구체적이고 시각적인 검색어)
-    3. title — 활동 제목 (단어 단위 재시도 포함, search_image가 처리)
+    2. title — 활동 제목 (단어 단위 재시도 포함, search_image가 처리)
 
     모두 실패하면 None을 반환하며, 이 경우 프론트는 이미지 없이
     텍스트만 표시하면 됩니다.
@@ -70,9 +69,6 @@ def search_image_for_recommendation(rec: dict) -> str | None:
 
     if rec.get("image_keyword"):
         candidates.append(rec["image_keyword"])
-
-    if rec.get("location"):
-        candidates.append(rec["location"])
 
     if rec.get("title"):
         candidates.append(rec["title"])
