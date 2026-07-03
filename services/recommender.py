@@ -2,6 +2,7 @@ import json
 
 from services.gemini import client
 from services.image_analyzer import analyze_image
+from services.image_search import search_image_for_recommendation
 
 from services.recommendation_memory import (
     get_recent_recommendations,
@@ -88,7 +89,7 @@ def recommend(activity_data):
 반드시 JSON만 출력하세요.
 """
 
-    print("Gemini 추천 생성 중...\n")
+    print("작성자에게 적합한 활동 추천 중...\n")
 
     response = client.models.generate_content(
         model="gemini-2.5-flash",
@@ -121,6 +122,15 @@ def recommend(activity_data):
 
             else:
                 filtered.append(rec)
+
+        # -------------------------
+        # 추천 활동별 이미지 검색
+        # image_keyword -> location -> title 순으로 시도
+        # -------------------------
+        print("\n추천 활동 이미지 검색 중...\n")
+
+        for rec in filtered:
+            rec["image_url"] = search_image_for_recommendation(rec)
 
         result["recommendations"] = filtered
 
